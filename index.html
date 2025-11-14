@@ -1,37 +1,33 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="en">
 <head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Smart Traffic Signal Control | Project by Ruchitha Keesari</title>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Smart Traffic Signal — Realistic Demo</title>
   <link rel="stylesheet" href="style.css" />
-  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
 </head>
 <body>
   <header>
-    <h1>🚦 Smart Traffic Signal Control System</h1>
-    <h3>Using Multi-Agent Reinforcement Learning</h3>
+    <h1>Smart Traffic Signal Control — Realistic Demo</h1>
+    <p class="subtitle">Vehicles stop before junction • Only green direction moves</p>
   </header>
 
   <main>
-    <canvas id="trafficCanvas" width="900" height="500"></canvas>
-
-    <div class="stats">
-      <div class="card">🚗 North: <span id="northCount">0</span></div>
-      <div class="card">🚗 East: <span id="eastCount">0</span></div>
-      <div class="card">🚗 South: <span id="southCount">0</span></div>
-      <div class="card">🚗 West: <span id="westCount">0</span></div>
+    <div id="canvas-wrap">
+      <canvas id="simCanvas" width="900" height="600"></canvas>
     </div>
 
-    <div class="chart-container">
-      <canvas id="trafficChart" width="700" height="250"></canvas>
+    <div id="info-row">
+      <div class="count">North: <span id="countN">0</span></div>
+      <div class="count">East:  <span id="countE">0</span></div>
+      <div class="count">South: <span id="countS">0</span></div>
+      <div class="count">West:  <span id="countW">0</span></div>
+      <div class="count">Green: <span id="greenDir">N</span> | Time left: <span id="timeLeft">15</span>s</div>
     </div>
-
-    <h3 id="info"></h3>
   </main>
 
   <footer>
-    <p>Project by <b>Ruchitha Keesari</b> | B.Tech | 2025</p>
+    <small>Project by Ruchitha Keesari — Smart Traffic Signal (Demo)</small>
   </footer>
 
   <script src="script.js"></script>
