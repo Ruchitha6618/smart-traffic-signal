@@ -1,23 +1,17 @@
 :root{
   --bg:#0b0b0b;
-  --road:#232323;
-  --road-inner:#2a2a2a;
-  --panel:#151515;
+  --panel:#111;
+  --road:#1e1e1e;
   --white:#ffffff;
-  --car:#c95752;
-  --glass:#9fd8ff;
 }
-
 *{box-sizing:border-box}
 html,body{height:100%;margin:0;background:linear-gradient(#070707,#0b0b0b);font-family:Arial,Helvetica,sans-serif;color:var(--white);}
-#app{display:flex;flex-direction:column;align-items:center;padding:12px;gap:8px;}
-canvas{border:6px solid rgba(255,255,255,0.04);box-shadow:0 10px 40px rgba(0,0,0,0.6);max-width:98%;height:auto;display:block;background:transparent;}
-#status{width:1000px;text-align:center;margin-top:6px;}
-#statusText{font-size:32px;font-weight:700;color:var(--white);text-shadow:0 3px 0 rgba(0,0,0,0.6);}
-
-/* responsive */
+#app{display:flex;flex-direction:column;align-items:center;padding:12px;}
+canvas{border:6px solid rgba(255,255,255,0.04);box-shadow:0 10px 40px rgba(0,0,0,0.6);display:block;background:transparent;}
+#status{width:1000px;text-align:center;margin-top:8px;}
+#statusText{font-size:20px;font-weight:700;color:#fff;text-shadow:0 2px 0 rgba(0,0,0,0.5);}
 @media(max-width:1040px){
-  #status{width:92vw;}
-  #statusText{font-size:20px;}
   canvas{width:92vw;height:auto;}
+  #status{width:92vw;}
+  #statusText{font-size:16px;}
 }
