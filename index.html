@@ -1,34 +1,18 @@
 <!doctype html>
 <html lang="en">
 <head>
-  <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width,initial-scale=1" />
-  <title>Smart Traffic Signal — Realistic Demo</title>
+  <meta charset="utf-8"/>
+  <meta name="viewport" content="width=device-width,initial-scale=1"/>
+  <title>Smart Traffic Simulation — Realistic Junction Behavior</title>
   <link rel="stylesheet" href="style.css" />
 </head>
 <body>
-  <header>
-    <h1>Smart Traffic Signal Control — Realistic Demo</h1>
-    <p class="subtitle">Vehicles stop before junction • Only green direction moves</p>
-  </header>
-
-  <main>
-    <div id="canvas-wrap">
-      <canvas id="simCanvas" width="900" height="600"></canvas>
+  <div id="app">
+    <canvas id="canvas" width="900" height="600"></canvas>
+    <div id="status">
+      <span id="statusText">Current Green: N | Time Left: 15s | Cars: 0</span>
     </div>
-
-    <div id="info-row">
-      <div class="count">North: <span id="countN">0</span></div>
-      <div class="count">East:  <span id="countE">0</span></div>
-      <div class="count">South: <span id="countS">0</span></div>
-      <div class="count">West:  <span id="countW">0</span></div>
-      <div class="count">Green: <span id="greenDir">N</span> | Time left: <span id="timeLeft">15</span>s</div>
-    </div>
-  </main>
-
-  <footer>
-    <small>Project by Ruchitha Keesari — Smart Traffic Signal (Demo)</small>
-  </footer>
+  </div>
 
   <script src="script.js"></script>
 </body>
