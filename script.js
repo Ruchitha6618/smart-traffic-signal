@@ -1,7 +1,9 @@
-/* SLOT-BASED NON-OVERLAPPING WEB VERSION
-   Matches Pygame layout exactly.
-   Gap between cars = 65px (Option C)
-   Density-based green logic (Option C)
+/* SLOT-BASED NON-OVERLAPPING WEB VERSION (FIXED)
+   - Keeps your original layout & sizes
+   - Strict bounding-box checks before moving into/spawning a slot
+   - Snaps cars to slot centers when waiting (no drift)
+   - Updates cars farthest-first for stable slot claiming
+   - Density-based green timing (Option C) kept
 */
 
 const canvas = document.getElementById('canvas');
@@ -38,7 +40,7 @@ const LANE = {
 };
 
 // ===== SLOT SETTINGS =====
-const SLOT_GAP = 65;          // <==== YOUR GAP CHOICE
+const SLOT_GAP = 65;          // your chosen gap
 const SLOTS_MAX = 8;          // cars per lane (max)
 
 // Precompute slot coordinates for each direction:
@@ -60,6 +62,21 @@ const SLOT_POS = {
     y: LANE.W - CAR_WID/2
   }))
 };
+
+// helper to get slot bbox for overlap checks
+function slotBBox(dir, slotIndex){
+  const p = SLOT_POS[dir][slotIndex];
+  if(dir === 'N' || dir === 'S'){
+    return { x: p.x, y: p.y, w: CAR_WID, h: CAR_LEN };
+  } else {
+    return { x: p.x, y: p.y, w: CAR_LEN, h: CAR_WID };
+  }
+}
+
+// bounding-rect overlap
+function rectOverlap(a,b){
+  return !(a.x + a.w <= b.x || b.x + b.w <= a.x || a.y + a.h <= b.y || b.y + b.h <= a.y);
+}
 
 // ================= SIGNAL SYSTEM =================
 class Signal {
@@ -87,7 +104,7 @@ class Signal {
 
       const waiting = waitingCount(this.dir);
       let sec = Math.min(35, 10 + 1.5 * waiting);  // Option C
-      this.framesLeft = sec * FPS;
+      this.framesLeft = Math.round(sec * FPS);
     }
   }
 
@@ -101,6 +118,10 @@ class Signal {
   countdown(){
     return Math.max(0, Math.ceil(this.framesLeft / FPS));
   }
+
+  current(){
+    return this.dir;
+  }
 }
 
 // ===== CARS (slot-based, non-overlapping) =====
@@ -110,9 +131,11 @@ class Car {
     this.slot = slot;     // 0 = frontmost, SLOTS_MAX-1 = farthest away
     this.crossed = false;
 
-    this.speed = Math.random() * 0.5 + 0.8;  // slow realistic speed
+    // tuned slower speeds to be stable
+    this.speed = Math.random() * 0.5 + 0.8;
 
     const p = SLOT_POS[dir][slot];
+    // snap exactly to slot bbox top-left
     this.x = p.x;
     this.y = p.y;
 
@@ -127,6 +150,19 @@ class Car {
     return this.x;
   }
 
+  // Check if the bbox of slotIndex for this.dir is free of any non-crossed car
+  slotIsFree(slotIndex){
+    const bbox = slotBBox(this.dir, slotIndex);
+    for(const c of cars){
+      if(c === this) continue;
+      if(c.crossed) continue; // ignore cars already in crossing/outgoing
+      if(c.dir !== this.dir) continue;
+      if(rectOverlap(bbox, {x:c.x, y:c.y, w:c.w, h:c.h})) return false;
+    }
+    return true;
+  }
+
+  // Strict update:
   update(state, curGreen){
     const p = SLOT_POS[this.dir][this.slot];
 
@@ -139,45 +175,93 @@ class Car {
       return;
     }
 
-    // Mark crossed when front passes stop line
-    if(this.dir==="N" && this.front() < STOP.N) this.crossed=true;
-    if(this.dir==="S" && this.front() > STOP.S) this.crossed=true;
-    if(this.dir==="E" && this.front() > STOP.E) this.crossed=true;
-    if(this.dir==="W" && this.front() < STOP.W) this.crossed=true;
+    // Mark crossed when front passes stop line (small tolerance)
+    if(this.dir==="N" && this.front() < STOP.N - 2) this.crossed=true;
+    if(this.dir==="S" && this.front() > STOP.S + 2) this.crossed=true;
+    if(this.dir==="E" && this.front() > STOP.E + 2) this.crossed=true;
+    if(this.dir==="W" && this.front() < STOP.W - 2) this.crossed=true;
 
     if(this.crossed){
-      this.update(state, curGreen);
+      // let next frame handle movement after crossed
       return;
     }
 
-    // STOP if red or yellow
+    // STOP if light is not green by default
     const myLight = state[this.dir];
     let stop = (myLight !== "GREEN");
 
-    // If frontmost slot (slot 0) AND green → move through intersection
+    // If frontmost slot (slot 0) AND green → allowed to move (but still ensure intersection area won't overlap others)
     if(this.slot === 0 && this.dir === curGreen){
       stop = false;
     }
 
-    // If not stop → move toward intersection (reduce slot index)
+    // If not stop → attempt to move toward next slot (slot-1) or through intersection
     if(!stop){
-      // Move closer to intersection: reduce slot index
       if(this.slot > 0){
         const nextSlot = this.slot - 1;
-        const nextP = SLOT_POS[this.dir][nextSlot];
+        // Strict check: ensure nextSlot bbox is free now (no overlap)
+        if(this.slotIsFree(nextSlot)){
+          const nextP = SLOT_POS[this.dir][nextSlot];
+          // Smooth move toward next slot top-left
+          const dx = nextP.x - this.x;
+          const dy = nextP.y - this.y;
+          const dist = Math.sqrt(dx*dx + dy*dy);
+          const step = dist > 0 ? Math.min(this.speed, dist) : 0;
+          if(dist > 0){
+            this.x += (dx/dist) * step;
+            this.y += (dy/dist) * step;
+          }
+          // Switch to next slot when close enough (claim it)
+          if(dist < 1){
+            this.slot = nextSlot;
+            // snap to exact slot to avoid subpixel overlap
+            this.x = nextP.x; this.y = nextP.y;
+          }
+        } else {
+          // next slot occupied -> snap to current slot exact position
+          const here = SLOT_POS[this.dir][this.slot];
+          this.x = here.x; this.y = here.y;
+        }
+      } else {
+        // slot 0 and allowed (green): before moving into intersection ensure intersection entry area won't overlap any car
+        // We'll compute a small "entry bbox" representing the car moving slightly past stop line; if any car (crossed==false) overlaps it, wait.
+        const entryDist = 12; // small advance to check
+        let entryBBox;
+        if(this.dir === 'N'){
+          entryBBox = { x: this.x, y: this.y - entryDist, w: this.w, h: this.h + entryDist };
+        } else if(this.dir === 'S'){
+          entryBBox = { x: this.x, y: this.y, w: this.w, h: this.h + entryDist };
+        } else if(this.dir === 'E'){
+          entryBBox = { x: this.x, y: this.y, w: this.w + entryDist, h: this.h };
+        } else { // W
+          entryBBox = { x: this.x - entryDist, y: this.y, w: this.w + entryDist, h: this.h };
+        }
 
-        // Smooth move
-        const dx = nextP.x - this.x;
-        const dy = nextP.y - this.y;
-        const dist = Math.sqrt(dx*dx + dy*dy);
-        const step = Math.min(this.speed, dist);
+        // If any non-crossed car (including from other lanes) overlaps that entry box -> wait (prevents mid-junction stops/overlaps)
+        let blocked = false;
+        for(const c of cars){
+          if(c === this) continue;
+          // ignore cars that have already crossed (they're leaving)
+          if(c.crossed) continue;
+          if(rectOverlap(entryBBox, {x:c.x, y:c.y, w:c.w, h:c.h})){ blocked = true; break; }
+        }
 
-        this.x += dx/dist * step;
-        this.y += dy/dist * step;
-
-        // Switch to next slot when close enough
-        if(dist < 1) this.slot = nextSlot;
+        if(!blocked){
+          // move through intersection
+          if(this.dir === "N") this.y -= this.speed;
+          if(this.dir === "S") this.y += this.speed;
+          if(this.dir === "E") this.x += this.speed;
+          if(this.dir === "W") this.x -= this.speed;
+        } else {
+          // blocked -> snap to slot 0 exact top-left
+          const here = SLOT_POS[this.dir][this.slot];
+          this.x = here.x; this.y = here.y;
+        }
       }
+    } else {
+      // must stop due to red/yellow: snap to slot center to avoid drift/overlap
+      const here = SLOT_POS[this.dir][this.slot];
+      this.x = here.x; this.y = here.y;
     }
   }
 
@@ -188,9 +272,9 @@ class Car {
 
     ctx.fillStyle = "rgb(160,220,255)";
     if(this.dir==="N"||this.dir==="S")
-      ctx.fillRect(this.x+4, this.y+6, this.w-8, this.h*0.3);
+      ctx.fillRect(this.x+4, this.y+6, Math.max(2, this.w-8), this.h*0.3);
     else
-      ctx.fillRect(this.x+6, this.y+4, this.w*0.3, this.h-8);
+      ctx.fillRect(this.x+6, this.y+4, this.w*0.3, Math.max(2, this.h-8));
   }
 
   offscreen(){
@@ -253,19 +337,31 @@ function nextGreenDirection(){
   return best;
 }
 
-// spawn car in highest empty slot (NO OVERLAP EVER)
+// spawn car in highest empty slot (NO OVERLAP)
+// Uses strict bbox check to ensure spawn slot is physically free
 function spawn(){
   if(frame % SPAWN_INTERVAL !== 0) return;
   if(cars.length >= MAX_CARS) return;
 
   const dirs = ["N","S","E","W"];
-  const d = dirs[Math.floor(Math.random()*4)];
-
-  const filled = cars.filter(c => c.dir===d).map(c => c.slot);
-  for(let s = SLOTS_MAX-1; s>=0; s--){
-    if(!filled.includes(s)){
-      cars.push(new Car(d, s));
-      return;
+  // pick a random starting lane to attempt spawn to avoid bias
+  const start = Math.floor(Math.random()*4);
+  for(let k=0;k<4;k++){
+    const d = dirs[(start + k) % 4];
+    // check from farthest slot downwards
+    for(let s = SLOTS_MAX-1; s>=0; s--){
+      const bbox = slotBBox(d, s);
+      // check overlap with any non-crossed car in same lane
+      let occ = false;
+      for(const c of cars){
+        if(c.crossed) continue;
+        if(c.dir !== d) continue;
+        if(rectOverlap(bbox, {x:c.x, y:c.y, w:c.w, h:c.h})){ occ = true; break; }
+      }
+      if(!occ){
+        cars.push(new Car(d, s));
+        return;
+      }
     }
   }
 }
@@ -345,6 +441,13 @@ function loop(){
   spawn();
 
   // update / draw cars
+  // SORT farthest-first so front cars move before followers (reduces race)
+  cars.sort((a,b)=>{
+    const da = Math.hypot((a.x + a.w/2) - CENTER_X, (a.y + a.h/2) - CENTER_Y);
+    const db = Math.hypot((b.x + b.w/2) - CENTER_X, (b.y + b.h/2) - CENTER_Y);
+    return db - da;
+  });
+
   for(let i=cars.length-1; i>=0; i--){
     const c=cars[i];
     c.update(state, cur);
@@ -364,5 +467,20 @@ function loop(){
 
   requestAnimationFrame(loop);
 }
+
+// Initialize with a few vehicles in each lane to show queues immediately
+(function initQueues(){
+  for(let lane of ['N','E','S','W']){
+    for(let s=0;s<3;s++){
+      // spawn only if bbox free
+      const bbox = slotBBox(lane, s);
+      let occupied = cars.some(c => !c.crossed && c.dir===lane && rectOverlap(bbox, {x:c.x,y:c.y,w:c.w,h:c.h}));
+      if(!occupied) cars.push(new Car(lane, s));
+    }
+  }
+  // extras
+  if(slotBBox('E',3)) { if(!cars.some(c=>c.dir==='E'&&c.slot===3)) cars.push(new Car('E',3)); }
+  if(slotBBox('W',3)) { if(!cars.some(c=>c.dir==='W'&&c.slot===3)) cars.push(new Car('W',3)); }
+})();
 
 requestAnimationFrame(loop);
