@@ -1,30 +1,28 @@
 :root{
-  --bg:#0f0f10; --panel:#151515; --road:#2e2e2e; --accent:#00d6b4; --white:#ffffff;
+  --bg:#0f0f10;
+  --panel:#1e1e1e;
+  --road:#313131;
+  --accent:#00d36a;
+  --white:#ffffff;
 }
+
 *{box-sizing:border-box}
-html,body{height:100%;margin:0;background:linear-gradient(180deg,#070707,#0c0c0c);font-family:Inter,Roboto,Arial,sans-serif;color:var(--white);}
-#app{display:flex;flex-direction:column;align-items:center;gap:10px;padding:18px;}
-#header{text-align:center;}
-#header h1{margin:6px 0;color:var(--accent);font-size:22px;}
-.subtitle{margin:0;color:#bfbfbf;font-size:13px}
-
-#canvas-wrap{background:transparent;padding:6px;border-radius:8px;}
-canvas{display:block;border:6px solid rgba(255,255,255,0.04);box-shadow:0 10px 40px rgba(0,0,0,0.6);max-width:98%;height:auto;}
-
-#controls{width:1000px;display:flex;justify-content:space-between;align-items:center;margin-top:6px;gap:10px;}
-#statusText{font-weight:700;font-size:18px;color:#fff}
-#counts{display:flex;gap:16px;color:#cfeee0}
-#counts span{font-weight:600}
-
-#legend{display:flex;gap:12px;margin-top:6px;color:#cfeee0}
-.leg{display:flex;align-items:center;gap:8px}
-.veh{width:22px;height:14px;display:inline-block;border-radius:3px;box-shadow:0 1px 0 #0004}
-.veh.car{background:#c95752}
-.veh.bike{background:#ffd46a}
-.veh.auto{background:#9be07b}
-
-@media(max-width:1040px){
-  #controls, #legend{width:92vw;flex-wrap:wrap}
-  #statusText{font-size:16px}
+html,body{height:100%;margin:0;background:linear-gradient(#0b0b0b,#0f0f0f);font-family:Arial,Helvetica,sans-serif;color:var(--white);}
+#app{display:flex;flex-direction:column;align-items:center;padding:12px;gap:10px;}
+canvas{
+  border:6px solid rgba(255,255,255,0.04);
+  box-shadow:0 10px 40px rgba(0,0,0,0.6);
+  max-width:98%;
+  height:auto;
+  display:block;
+  background:transparent;
 }
+#status{width:1000px;text-align:center;margin-top:6px;}
+#statusText{font-size:32px;font-weight:700;color:#fff;text-shadow:0 3px 0 rgba(0,0,0,0.6);}
 
+/* responsive */
+@media(max-width:1040px){
+  #status{width:92vw;}
+  #statusText{font-size:20px;}
+  canvas{width:92vw;height:auto;}
+}
