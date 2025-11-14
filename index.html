@@ -1,38 +1,17 @@
 <!doctype html>
 <html lang="en">
 <head>
-  <meta charset="utf-8"/>
-  <meta name="viewport" content="width=device-width,initial-scale=1"/>
-  <title>Smart Traffic Signal — Advanced Realistic Demo</title>
-  <link rel="stylesheet" href="style.css"/>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Smart Traffic Simulation — Realistic Junction Behavior</title>
+  <link rel="stylesheet" href="style.css" />
 </head>
 <body>
   <div id="app">
-    <div id="header">
-      <h1>Smart Traffic Signal Control — Advanced Demo</h1>
-      <p class="subtitle">Density-adaptive signals • realistic vehicles • turning • yellow timing</p>
+    <canvas id="canvas" width="1000" height="700"></canvas>
+    <div id="status">
+      <span id="statusText">Current Green: N | Time Left: 15s | Cars: 0</span>
     </div>
-
-    <div id="canvas-wrap">
-      <canvas id="canvas" width="1000" height="700"></canvas>
-    </div>
-
-    <div id="controls">
-      <div id="statusText">Current Green: N | Time Left: 0s | Total: 0</div>
-      <div id="counts">
-        <span>North: <b id="countN">0</b></span>
-        <span>East: <b id="countE">0</b></span>
-        <span>South: <b id="countS">0</b></span>
-        <span>West: <b id="countW">0</b></span>
-      </div>
-    </div>
-
-    <div id="legend">
-      <div class="leg"><span class="veh car"></span> Car</div>
-      <div class="leg"><span class="veh bike"></span> Bike</div>
-      <div class="leg"><span class="veh auto"></span> Auto</div>
-    </div>
-
   </div>
 
   <script src="script.js"></script>
