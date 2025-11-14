@@ -1,430 +1,368 @@
-/* Web clone of your Pygame simulation (1000x700)
-   - Exact sizes (CAR_LENGTH = 44, CAR_WIDTH = 24)
-   - STOP lines and signal positions copied
-   - Density-based signal selection: C) aggressive scaling
-       green_time = 10 + 1.5 * waiting_cars (cap 35s)
-   - Yellow = 3s
-   - Spawn interval, speeds, gaps match Pygame defaults
-   - Straight-only movements, stop before junction, crossed logic
+/* SLOT-BASED NON-OVERLAPPING WEB VERSION
+   Matches Pygame layout exactly.
+   Gap between cars = 65px (Option C)
+   Density-based green logic (Option C)
 */
 
 const canvas = document.getElementById('canvas');
 const ctx = canvas.getContext('2d');
 
-const SCREEN_WIDTH = canvas.width;
-const SCREEN_HEIGHT = canvas.height;
-const ROAD_WIDTH = 180;
+const W = canvas.width;     // 1000
+const H = canvas.height;    // 700
 const FPS = 60;
 
-// Pygame constants (copied)
-const BASE_GREEN_FRAMES = 900;  // 15s usually (used initially)
-const YELLOW_FRAMES = 180;      // 3s
-const STOP_GAP = 140;           // (used in Pygame stop positions)
-const SAFE_GAP = 45;
-const STOP_OFFSET = 30;         // used for stopping threshold
-const SPAWN_INTERVAL = 50;      // frames
+// ===== MATCH PYGAME VALUES EXACTLY =====
+const ROAD_WIDTH = 180;
+const CAR_LEN = 44;
+const CAR_WID = 24;
+const STOP_GAP = 140;
+const STOP_OFFSET = 30;
 const MAX_CARS = 40;
+const SPAWN_INTERVAL = 50;
 
-const CAR_LENGTH = 44, CAR_WIDTH = 24;
-const CAR_COLOR = 'rgb(200,80,70)';
-const GLASS = 'rgb(160,220,255)';
+const CENTER_X = W / 2;
+const CENTER_Y = H / 2;
 
-// colors used by signals and background
-const GREEN = 'rgb(0,255,0)';
-const YELLOW = 'rgb(255,230,0)';
-const RED = 'rgb(255,0,0)';
-const GREY = 'rgb(50,50,50)';
-const ROAD = 'rgb(30,30,30)';
-const WHITE = '#ffffff';
-
-// center coordinates
-const CENTER_X = Math.floor(SCREEN_WIDTH / 2);
-const CENTER_Y = Math.floor(SCREEN_HEIGHT / 2);
-const LANE_SHIFT = Math.floor(ROAD_WIDTH / 4);
-
-// STOP_LINES (following your Pygame)
-const STOP_LINES = {
+const STOP = {
   N: CENTER_Y + STOP_GAP,
   S: CENTER_Y - STOP_GAP,
   E: CENTER_X - STOP_GAP,
   W: CENTER_X + STOP_GAP
 };
 
-// lane anchor positions (center line)
-const LANE_POS = {
-  N: [CENTER_X - LANE_SHIFT, null],
-  S: [CENTER_X + LANE_SHIFT, null],
-  E: [null, CENTER_Y - LANE_SHIFT],
-  W: [null, CENTER_Y + LANE_SHIFT]
+const LANE = {
+  N: CENTER_X - ROAD_WIDTH/4,
+  S: CENTER_X + ROAD_WIDTH/4,
+  E: CENTER_Y - ROAD_WIDTH/4,
+  W: CENTER_Y + ROAD_WIDTH/4
 };
 
-// Utility
-function rand(min, max){ return Math.random() * (max - min) + min; }
-function clamp(v, a, b){ return Math.max(a, Math.min(b, v)); }
+// ===== SLOT SETTINGS =====
+const SLOT_GAP = 65;          // <==== YOUR GAP CHOICE
+const SLOTS_MAX = 8;          // cars per lane (max)
 
-// ---------- Signal system (density-based, aggressive scaling C) ----------
+// Precompute slot coordinates for each direction:
+const SLOT_POS = {
+  N: Array.from({length: SLOTS_MAX}, (_,i) => ({
+    x: LANE.N - CAR_WID/2,
+    y: STOP.N + (i+1) * SLOT_GAP
+  })),
+  S: Array.from({length: SLOTS_MAX}, (_,i) => ({
+    x: LANE.S - CAR_WID/2,
+    y: STOP.S - (i+1) * SLOT_GAP - CAR_LEN
+  })),
+  E: Array.from({length: SLOTS_MAX}, (_,i) => ({
+    x: STOP.E - (i+1) * SLOT_GAP - CAR_LEN,
+    y: LANE.E - CAR_WID/2
+  })),
+  W: Array.from({length: SLOTS_MAX}, (_,i) => ({
+    x: STOP.W + (i+1) * SLOT_GAP,
+    y: LANE.W - CAR_WID/2
+  }))
+};
+
+// ================= SIGNAL SYSTEM =================
 class Signal {
   constructor(){
-    this.dir = 'S';         // initial direction (we start with S like your pygame order)
-    this.phase = 'green';   // 'green' or 'yellow'
-    this.timer = 0;         // frames into current phase
-    // initial green frames start with BASE_GREEN_FRAMES to match initial behavior
-    this.greenFrames = BASE_GREEN_FRAMES;
-    this.timerFramesLeft = this.greenFrames;
+    this.dir = "S";    // start like your original Pygame
+    this.phase = "green";
+    this.timer = 0;
+    this.framesLeft = 15 * FPS;
   }
 
   tick(){
     this.timer++;
-    this.timerFramesLeft--;
-    if(this.phase === 'green' && this.timerFramesLeft <= 0){
-      // go yellow
-      this.phase = 'yellow';
-      this.timer = 0;
-      this.timerFramesLeft = YELLOW_FRAMES;
-    } else if(this.phase === 'yellow' && this.timerFramesLeft <= 0){
-      // yellow finished -> choose next green by density
-      this.phase = 'green';
-      this.timer = 0;
-      // choose next direction by density (see function below)
-      const next = chooseHighestDensityDirection();
-      this.dir = next;
-      // compute green time using aggressive scaling C:
-      const waiting = countWaitingCars(next);
-      const greenSec = Math.min(35, 10 + 1.5 * waiting); // seconds
-      this.greenFrames = Math.round(greenSec * FPS);
-      this.timerFramesLeft = this.greenFrames;
-    }
-  }
+    this.framesLeft--;
 
-  // return display friendly countdown seconds
-  countdown(){
-    const framesLeft = this.timerFramesLeft;
-    return Math.max(0, Math.ceil(framesLeft / FPS));
+    if(this.phase === "green" && this.framesLeft <= 0){
+      this.phase = "yellow";
+      this.timer = 0;
+      this.framesLeft = 3 * FPS;
+    }
+    else if(this.phase === "yellow" && this.framesLeft <= 0){
+      // Pick direction by vehicle density
+      this.dir = nextGreenDirection();
+      this.phase = "green";
+      this.timer = 0;
+
+      const waiting = waitingCount(this.dir);
+      let sec = Math.min(35, 10 + 1.5 * waiting);  // Option C
+      this.framesLeft = sec * FPS;
+    }
   }
 
   state(){
-    // return object mapping direction -> "GREEN"/"YELLOW"/"RED"
-    const out = {N: 'RED', E: 'RED', S: 'RED', W: 'RED'};
-    out[this.dir] = (this.phase === 'green') ? 'GREEN' : 'YELLOW';
-    return out;
+    const s = {N:"RED",E:"RED",S:"RED",W:"RED"};
+    if(this.phase === "green") s[this.dir] = "GREEN";
+    else s[this.dir] = "YELLOW";
+    return s;
   }
 
-  current(){
-    return this.dir;
+  countdown(){
+    return Math.max(0, Math.ceil(this.framesLeft / FPS));
   }
 }
 
-// Instantiate
-const signal = new Signal();
-
-// ---------- Vehicle class (mirror Pygame) ----------
+// ===== CARS (slot-based, non-overlapping) =====
 class Car {
-  constructor(direction){
-    this.direction = direction; // 'N','S','E','W'
-    // speed as random as Pygame (frames: px per frame)
-    this.speed = rand(1.2, 1.8);
+  constructor(dir, slot){
+    this.dir = dir;
+    this.slot = slot;     // 0 = frontmost, SLOTS_MAX-1 = farthest away
     this.crossed = false;
-    this.initRect();
+
+    this.speed = Math.random() * 0.5 + 0.8;  // slow realistic speed
+
+    const p = SLOT_POS[dir][slot];
+    this.x = p.x;
+    this.y = p.y;
+
+    this.w = (dir==="N"||dir==="S") ? CAR_WID : CAR_LEN;
+    this.h = (dir==="N"||dir==="S") ? CAR_LEN : CAR_WID;
   }
 
-  initRect(){
-    let w, h;
-    if(this.direction === 'N' || this.direction === 'S'){
-      w = CAR_WIDTH; h = CAR_LENGTH;
-    } else {
-      w = CAR_LENGTH; h = CAR_WIDTH;
-    }
-
-    let x,y;
-    if(this.direction === 'N'){
-      x = LANE_POS.N[0] - Math.floor(w/2);
-      y = SCREEN_HEIGHT + Math.floor(rand(100,180));
-    } else if(this.direction === 'S'){
-      x = LANE_POS.S[0] - Math.floor(w/2);
-      y = -h - Math.floor(rand(100,180));
-    } else if(this.direction === 'E'){
-      x = -w - Math.floor(rand(100,180));
-      y = LANE_POS.E[1] - Math.floor(h/2);
-    } else { // W
-      x = SCREEN_WIDTH + Math.floor(rand(100,180));
-      y = LANE_POS.W[1] - Math.floor(h/2);
-    }
-
-    this.w = Math.floor(w); this.h = Math.floor(h);
-    this.x = x; this.y = y;
-  }
-
-  // lock to lane center each update (so vehicles don't drift)
-  laneLock(){
-    if(this.direction === 'N' || this.direction === 'S'){
-      this.x = LANE_POS[this.direction][0] - Math.floor(this.w/2);
-    } else {
-      this.y = LANE_POS[this.direction][1] - Math.floor(this.h/2);
-    }
-  }
-
-  frontPos(){
-    if(this.direction === 'N') return this.y;
-    if(this.direction === 'S') return this.y + this.h;
-    if(this.direction === 'E') return this.x + this.w;
+  front(){
+    if(this.dir === "N") return this.y;
+    if(this.dir === "S") return this.y + this.h;
+    if(this.dir === "E") return this.x + this.w;
     return this.x;
   }
 
-  gap(cars){
-    let minGap = null;
-    for(const c of cars){
-      if(c === this || c.direction !== this.direction) continue;
-      let d;
-      // use center comparisons similar to your Pygame code
-      if(this.direction === 'N' && c.y < this.y){
-        d = this.y - (c.y + c.h);
-      } else if(this.direction === 'S' && c.y > this.y){
-        d = c.y - (this.y + this.h);
-      } else if(this.direction === 'E' && c.x > this.x){
-        d = c.x - (this.x + this.w);
-      } else if(this.direction === 'W' && c.x < this.x){
-        d = this.x - (c.x + c.w);
-      } else continue;
+  update(state, curGreen){
+    const p = SLOT_POS[this.dir][this.slot];
 
-      if(d >= 0 && (minGap === null || d < minGap)) minGap = d;
+    // If crossed → go straight through intersection
+    if(this.crossed){
+      if(this.dir === "N") this.y -= this.speed;
+      if(this.dir === "S") this.y += this.speed;
+      if(this.dir === "E") this.x += this.speed;
+      if(this.dir === "W") this.x -= this.speed;
+      return;
     }
-    return minGap;
-  }
 
-  // update position based on light state & gap logic. Mirrors Pygame's move()
-  move(state, current_green, cars){
-    this.laneLock();
-    const g = this.gap(cars);
-    const stop_for_gap = (g !== null && g < SAFE_GAP);
+    // Mark crossed when front passes stop line
+    if(this.dir==="N" && this.front() < STOP.N) this.crossed=true;
+    if(this.dir==="S" && this.front() > STOP.S) this.crossed=true;
+    if(this.dir==="E" && this.front() > STOP.E) this.crossed=true;
+    if(this.dir==="W" && this.front() < STOP.W) this.crossed=true;
 
-    const light = state[this.direction];
-    const front = this.frontPos();
+    if(this.crossed){
+      this.update(state, curGreen);
+      return;
+    }
 
-    // mark crossed when front passes the stop line (same condition as Pygame)
-    if(!this.crossed){
-      if((this.direction === 'N' && front < STOP_LINES['N']) ||
-         (this.direction === 'S' && front > STOP_LINES['S']) ||
-         (this.direction === 'E' && front > STOP_LINES['E']) ||
-         (this.direction === 'W' && front < STOP_LINES['W'])){
-        this.crossed = true;
+    // STOP if red or yellow
+    const myLight = state[this.dir];
+    let stop = (myLight !== "GREEN");
+
+    // If frontmost slot (slot 0) AND green → move through intersection
+    if(this.slot === 0 && this.dir === curGreen){
+      stop = false;
+    }
+
+    // If not stop → move toward intersection (reduce slot index)
+    if(!stop){
+      // Move closer to intersection: reduce slot index
+      if(this.slot > 0){
+        const nextSlot = this.slot - 1;
+        const nextP = SLOT_POS[this.dir][nextSlot];
+
+        // Smooth move
+        const dx = nextP.x - this.x;
+        const dy = nextP.y - this.y;
+        const dist = Math.sqrt(dx*dx + dy*dy);
+        const step = Math.min(this.speed, dist);
+
+        this.x += dx/dist * step;
+        this.y += dy/dist * step;
+
+        // Switch to next slot when close enough
+        if(dist < 1) this.slot = nextSlot;
       }
-    }
-
-    // Stop only if not crossed and light isn't GREEN and close to stop (using STOP_OFFSET)
-    const should_stop = (!this.crossed && light !== 'GREEN' && (
-      (this.direction === 'N' && front <= STOP_LINES['N'] + STOP_OFFSET) ||
-      (this.direction === 'S' && front >= STOP_LINES['S'] - STOP_OFFSET) ||
-      (this.direction === 'E' && front >= STOP_LINES['E'] - STOP_OFFSET) ||
-      (this.direction === 'W' && front <= STOP_LINES['W'] + STOP_OFFSET)
-    ));
-
-    // If crossed -> always move (unless blocked by gap)
-    // If not crossed: move only if light is GREEN for this direction
-    if((this.crossed || (!should_stop && this.direction === current_green)) && !stop_for_gap){
-      if(this.direction === 'N') this.y -= this.speed;
-      else if(this.direction === 'S') this.y += this.speed;
-      else if(this.direction === 'E') this.x += this.speed;
-      else if(this.direction === 'W') this.x -= this.speed;
     }
   }
 
   draw(){
-    // draw rounded rectangle body and windshield exactly like Pygame
-    ctx.fillStyle = CAR_COLOR;
-    roundRect(ctx, Math.round(this.x), Math.round(this.y), this.w, this.h, 6);
+    ctx.fillStyle = "rgb(200,80,70)";
+    roundRect(ctx, this.x, this.y, this.w, this.h, 6);
     ctx.fill();
 
-    // glass area depends on orientation like your Pygame
-    ctx.fillStyle = GLASS;
-    if(this.direction === 'N' || this.direction === 'S'){
-      ctx.fillRect(Math.round(this.x + 4), Math.round(this.y + 6), Math.max(2,this.w - 8), Math.round(this.h * 0.3));
-    } else {
-      ctx.fillRect(Math.round(this.x + 6), Math.round(this.y + 4), Math.round(this.w * 0.3), Math.max(2,this.h - 8));
-    }
+    ctx.fillStyle = "rgb(160,220,255)";
+    if(this.dir==="N"||this.dir==="S")
+      ctx.fillRect(this.x+4, this.y+6, this.w-8, this.h*0.3);
+    else
+      ctx.fillRect(this.x+6, this.y+4, this.w*0.3, this.h-8);
   }
 
   offscreen(){
-    return (this.x + this.w < -120 || this.x > SCREEN_WIDTH + 120 || this.y + this.h < -120 || this.y > SCREEN_HEIGHT + 120);
+    return (
+      this.x + this.w < -200 ||
+      this.x > W + 200 ||
+      this.y + this.h < -200 ||
+      this.y > H + 200
+    );
   }
 }
 
-// helper to draw rounded rect
-function roundRect(ctx, x, y, w, h, r){
+function roundRect(ctx,x,y,w,h,r){
   ctx.beginPath();
-  ctx.moveTo(x + r, y);
-  ctx.arcTo(x + w, y, x + w, y + h, r);
-  ctx.arcTo(x + w, y + h, x, y + h, r);
-  ctx.arcTo(x, y + h, x, y, r);
-  ctx.arcTo(x, y, x + w, y, r);
+  ctx.moveTo(x+r,y);
+  ctx.arcTo(x+w,y,x+w,y+h,r);
+  ctx.arcTo(x+w,y+h,x,y+h,r);
+  ctx.arcTo(x,y+h,x,y,r);
+  ctx.arcTo(x,y,x+w,y,r);
   ctx.closePath();
 }
 
-// ---------- DRAW FUNCTIONS (roads, stop lines, signals) ----------
-function draw_roads(){
-  ctx.fillStyle = ROAD;
-  ctx.fillRect(CENTER_X - ROAD_WIDTH/2, 0, ROAD_WIDTH, SCREEN_HEIGHT);
-  ctx.fillRect(0, CENTER_Y - ROAD_WIDTH/2, SCREEN_WIDTH, ROAD_WIDTH);
+// ===== GLOBALS =====
+const signal = new Signal();
+const cars = [];
+let frame = 0;
 
-  // stop lines (thin white)
-  ctx.strokeStyle = WHITE;
-  ctx.lineWidth = 2;
-  ctx.beginPath(); ctx.moveTo(CENTER_X - ROAD_WIDTH/2, STOP_LINES.N); ctx.lineTo(CENTER_X + ROAD_WIDTH/2, STOP_LINES.N); ctx.stroke();
-  ctx.beginPath(); ctx.moveTo(CENTER_X - ROAD_WIDTH/2, STOP_LINES.S); ctx.lineTo(CENTER_X + ROAD_WIDTH/2, STOP_LINES.S); ctx.stroke();
-  ctx.beginPath(); ctx.moveTo(STOP_LINES.E, CENTER_Y - ROAD_WIDTH/2); ctx.lineTo(STOP_LINES.E, CENTER_Y + ROAD_WIDTH/2); ctx.stroke();
-  ctx.beginPath(); ctx.moveTo(STOP_LINES.W, CENTER_Y - ROAD_WIDTH/2); ctx.lineTo(STOP_LINES.W, CENTER_Y + ROAD_WIDTH/2); ctx.stroke();
+// ===== HELPER FUNCTIONS =====
+
+// count cars NOT crossed = waiting
+function waitingCount(dir){
+  return cars.filter(c => c.dir===dir && !c.crossed).length;
 }
 
-// draw the exact signal pole used in Pygame: 40x120 rect and 3 circles spaced by 30 px
-function draw_signal_pole(x, y, color, timerVal){
-  // box 40x120
-  ctx.fillStyle = 'rgb(40,40,40)';
-  ctx.fillRect(x, y, 40, 120);
-  // 3 lights
-  const circles = [
-    {cx: x + 20, cy: y + 20, col: RED},
-    {cx: x + 20, cy: y + 50, col: YELLOW},
-    {cx: x + 20, cy: y + 80, col: GREEN}
-  ];
-  for(let i=0;i<circles.length;i++){
-    const c = circles[i];
-    // if this light is the current phase, draw in bright color; otherwise dim
-    let drawColor = (i === 2 && color === GREEN) ? GREEN
-                  : (i === 1 && color === YELLOW) ? YELLOW
-                  : (i === 0 && color === RED) ? RED
-                  : 'rgb(90,90,90)';
-    // But Pygame draws the active color for the active phase only on the active pole: we mimic that in draw_signals
-    ctx.beginPath();
-    ctx.fillStyle = drawColor;
-    ctx.arc(c.cx, c.cy, 10, 0, Math.PI*2);
-    ctx.fill();
-  }
-  // timer above pole if provided
-  if(typeof timerVal === 'number'){
-    ctx.fillStyle = WHITE;
-    ctx.font = '18px Arial';
-    ctx.textAlign = 'center';
-    ctx.fillText(String(timerVal), x + 20, y - 15);
-  }
-}
-
-function draw_signals(state, timer, current){
-  // place signals with same coordinates as your python code
-  // N: (CENTER_X - 20, CENTER_Y - 250)
-  // S: (CENTER_X - 20, CENTER_Y + 130)
-  // E: (CENTER_X + 180, CENTER_Y - 60)
-  // W: (CENTER_X - 250, CENTER_Y - 60)
-  const mapping = {
-    N: [CENTER_X - 20, CENTER_Y - 250],
-    S: [CENTER_X - 20, CENTER_Y + 130],
-    E: [CENTER_X + 180, CENTER_Y - 60],
-    W: [CENTER_X - 250, CENTER_Y - 60]
+// choose next by density
+function nextGreenDirection(){
+  const waits = {
+    N: waitingCount("N"),
+    E: waitingCount("E"),
+    S: waitingCount("S"),
+    W: waitingCount("W"),
   };
 
-  for(const d of ['N','S','E','W']){
-    const [x,y] = mapping[d];
-    // decide what color to pass to draw_signal_pole:
-    // if this pole is the current dir:
-    const colTxt = state[d];
-    let activeColor = null;
-    if(colTxt === 'GREEN') activeColor = GREEN;
-    else if(colTxt === 'YELLOW') activeColor = YELLOW;
-    else activeColor = RED;
-    const showTimer = (d === current) ? timer : null;
-    draw_signal_pole(x, y, activeColor, showTimer);
-  }
-}
-
-// ---------- Main simulation state ----------
-const cars = []; // list of Car objects
-let frameCount = 0;
-
-// spawn function similar to Pygame
-function trySpawn(){
-  if(frameCount % SPAWN_INTERVAL !== 0) return;
-  if(cars.length >= MAX_CARS) return;
-  const dir = ['N','S','E','W'][Math.floor(Math.random()*4)];
-  cars.push(new Car(dir));
-}
-
-// count waiting cars (not crossed) for each direction
-function countWaitingCars(dir){
-  return cars.filter(c => c.direction === dir && !c.crossed).length;
-}
-function waitingCountsAll(){
-  return {
-    N: cars.filter(c=>c.direction==='N' && !c.crossed).length,
-    E: cars.filter(c=>c.direction==='E' && !c.crossed).length,
-    S: cars.filter(c=>c.direction==='S' && !c.crossed).length,
-    W: cars.filter(c=>c.direction==='W' && !c.crossed).length
-  };
-}
-
-// choose direction with highest waiting cars (if tie, choose longest-waiting: we pick existing signal.dir if tied else random among ties)
-function chooseHighestDensityDirection(){
-  const counts = waitingCountsAll();
   let max = -1;
-  let best = signal.dir; // prefer current if tied
-  for(const d of ['N','E','S','W']){
-    if(counts[d] > max){
-      max = counts[d];
+  let best = signal.dir;
+
+  for(const d of ["N","E","S","W"]){
+    if(waits[d] > max){
+      max = waits[d];
       best = d;
     }
   }
-  // if all zero -> rotate to next to avoid starvation (choose next clockwise of current)
+
+  // If all empty → rotate to avoid freezing
   if(max === 0){
-    const order = ['S','W','N','E']; // your original order—use this to rotate
-    const idx = order.indexOf(signal.dir);
-    return order[(idx + 1) % order.length];
+    const order = ["S","W","N","E"];
+    const i = order.indexOf(signal.dir);
+    return order[(i+1)%4];
   }
   return best;
 }
 
-// ---------- Main loop ----------
-function updateAndDraw(){
-  frameCount++;
+// spawn car in highest empty slot (NO OVERLAP EVER)
+function spawn(){
+  if(frame % SPAWN_INTERVAL !== 0) return;
+  if(cars.length >= MAX_CARS) return;
 
-  // background
-  ctx.fillStyle = GREY;
-  ctx.fillRect(0,0,SCREEN_WIDTH,SCREEN_HEIGHT);
+  const dirs = ["N","S","E","W"];
+  const d = dirs[Math.floor(Math.random()*4)];
 
-  // draw roads and stop lines
-  draw_roads();
-
-  // update signal
-  signal.tick();
-  const state = signal.state();
-  const current = signal.current();
-  draw_signals(state, signal.countdown(), current);
-
-  // spawn cars
-  trySpawn();
-
-  // move & draw cars copy of Pygame loop
-  for(let i = cars.length - 1; i >= 0; i--){
-    const c = cars[i];
-    c.move(state, current, cars);
-    c.draw();
-    // remove offscreen
-    if(c.offscreen()){
-      cars.splice(i,1);
+  const filled = cars.filter(c => c.dir===d).map(c => c.slot);
+  for(let s = SLOTS_MAX-1; s>=0; s--){
+    if(!filled.includes(s)){
+      cars.push(new Car(d, s));
+      return;
     }
   }
-
-  // bottom info text (big)
-  ctx.fillStyle = WHITE;
-  ctx.font = '20px Arial';
-  ctx.textAlign = 'center';
-  const infoText = `Current Green: ${signal.current()} | Time Left: ${signal.countdown()}s | Cars: ${cars.length}`;
-  ctx.fillText(infoText, CENTER_X, SCREEN_HEIGHT - 30);
-
-  // next frame
-  requestAnimationFrame(updateAndDraw);
 }
 
-// init: optionally prefill a few cars to show queues (like your Pygame example sometimes had)
-for(let i=0;i<6;i++){
-  cars.push(new Car(['N','E','S','W'][i%4]));
+// ===== DRAW SCENE =====
+function drawRoads(){
+  ctx.fillStyle = "rgb(30,30,30)";
+  ctx.fillRect(CENTER_X-ROAD_WIDTH/2,0,ROAD_WIDTH,H);
+  ctx.fillRect(0,CENTER_Y-ROAD_WIDTH/2,W,ROAD_WIDTH);
+
+  ctx.strokeStyle = "white";
+  ctx.lineWidth = 2;
+  ctx.beginPath(); ctx.moveTo(CENTER_X-ROAD_WIDTH/2,STOP.N); ctx.lineTo(CENTER_X+ROAD_WIDTH/2,STOP.N); ctx.stroke();
+  ctx.beginPath(); ctx.moveTo(CENTER_X-ROAD_WIDTH/2,STOP.S); ctx.lineTo(CENTER_X+ROAD_WIDTH/2,STOP.S); ctx.stroke();
+  ctx.beginPath(); ctx.moveTo(STOP.E,CENTER_Y-ROAD_WIDTH/2); ctx.lineTo(STOP.E,CENTER_Y+ROAD_WIDTH/2); ctx.stroke();
+  ctx.beginPath(); ctx.moveTo(STOP.W,CENTER_Y-ROAD_WIDTH/2); ctx.lineTo(STOP.W,CENTER_Y+ROAD_WIDTH/2); ctx.stroke();
 }
 
-// start
-requestAnimationFrame(updateAndDraw);
+function drawSignalPole(x,y,color,timer){
+  ctx.fillStyle = "rgb(40,40,40)";
+  ctx.fillRect(x,y,40,120);
+
+  function light(ix, colActive){
+    const cy = y + 20 + ix*30;
+    ctx.beginPath();
+    ctx.fillStyle = colActive;
+    ctx.arc(x+20, cy, 10, 0, Math.PI*2);
+    ctx.fill();
+  }
+
+  light(0, color==="RED" ? "red" : "rgb(90,90,90)");
+  light(1, color==="YELLOW" ? "yellow" : "rgb(90,90,90)");
+  light(2, color==="GREEN" ? "lime" : "rgb(90,90,90)");
+
+  if(timer){
+    ctx.fillStyle="white";
+    ctx.font="18px Arial";
+    ctx.textAlign="center";
+    ctx.fillText(timer,x+20,y-15);
+  }
+}
+
+function drawSignals(state, timer, cur){
+  const pos = {
+    N: [CENTER_X-20, CENTER_Y-250],
+    S: [CENTER_X-20, CENTER_Y+130],
+    E: [CENTER_X+180, CENTER_Y-60],
+    W: [CENTER_X-250, CENTER_Y-60]
+  };
+  for(const d of ["N","S","E","W"]){
+    drawSignalPole(
+      pos[d][0],
+      pos[d][1],
+      state[d],
+      d===cur ? timer : null
+    );
+  }
+}
+
+// ======================================================
+// MAIN LOOP (NO OVERLAP GUARANTEED)
+// ======================================================
+function loop(){
+  frame++;
+
+  ctx.fillStyle="rgb(50,50,50)";
+  ctx.fillRect(0,0,W,H);
+
+  drawRoads();
+
+  signal.tick();
+  const state = signal.state();
+  const cur = signal.current();
+
+  drawSignals(state, signal.countdown(), cur);
+
+  spawn();
+
+  // update / draw cars
+  for(let i=cars.length-1; i>=0; i--){
+    const c=cars[i];
+    c.update(state, cur);
+    c.draw();
+    if(c.offscreen()) cars.splice(i,1);
+  }
+
+  // bottom info
+  ctx.fillStyle="white";
+  ctx.font="20px Arial";
+  ctx.textAlign="center";
+  ctx.fillText(
+    `Current Green: ${cur} | Time Left: ${signal.countdown()}s | Cars: ${cars.length}`,
+    CENTER_X,
+    H - 30
+  );
+
+  requestAnimationFrame(loop);
+}
+
+requestAnimationFrame(loop);
