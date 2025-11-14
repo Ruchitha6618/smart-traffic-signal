@@ -1,89 +1,78 @@
-/* Realistic traffic simulation
-   - Vehicles stop before junction (stop lines)
+/* Realistic junction web simulation (Style A)
+   - Cars on all 4 sides waiting at red
    - Only green direction moves
-   - Cars keep safe gap and do not overlap
-   - Cars already crossing the stop line continue through
+   - Cars stop before stop line, never inside central box
+   - Counts & bottom status text
 */
 
-const canvas = document.getElementById('simCanvas');
+const canvas = document.getElementById('canvas');
 const ctx = canvas.getContext('2d');
 
 const W = canvas.width;
 const H = canvas.height;
 const CX = W/2, CY = H/2;
 
-// Road / stop-line configuration
-const ROAD_WIDTH = 160;
-const STOP_LINE_OFFSET = 110; // distance from center to stop line
-const SAFE_GAP = 36;          // minimum gap between vehicles (px)
-const SPAWN_GAP = 140;        // spacing between spawned cars (px)
-const CAR_W = 36, CAR_H = 18; // car visual size (portrait)
-const SPEED_MIN = 1.2, SPEED_MAX = 2.0;
+// Visual config (match Pygame)
+const ROAD_W = 160;
+const STOP_OFFSET = 110;   // how far stop line from center
+const STOP_N = CY + STOP_OFFSET;
+const STOP_S = CY - STOP_OFFSET;
+const STOP_E = CX - STOP_OFFSET;
+const STOP_W = CX + STOP_OFFSET;
 
-// directions in rotation order (only one green at a time)
+const CAR_W = 32, CAR_H = 16;
+const SAFE_GAP = 34;    // px gap between cars
+const SPAWN_INTERVAL_FRAMES = 70;
+const MAX_CARS = 120;
+
+// directions order
 const DIRS = ['N','E','S','W'];
-
-// traffic signal control
 let currentIndex = 0;
-let baseGreen = 15;      // base seconds
-let timerFrames = baseGreen * 60; // frames left
+let baseGreenSeconds = 15;
 const FPS = 60;
+let timerFrames = baseGreenSeconds * FPS;
 
-// store cars
+// cars storage
 let cars = [];
 let spawnCounter = 0;
-const SPAWN_INTERVAL = 70; // frames
 
-// helpers
-function rand(min,max){ return Math.random()*(max-min)+min; }
+// helper random
+const rand = (a,b)=> Math.random()*(b-a)+a;
 
-// stop line positions by direction
-const STOP = {
-  N: CY + STOP_LINE_OFFSET,
-  S: CY - STOP_LINE_OFFSET,
-  E: CX - STOP_LINE_OFFSET,
-  W: CX + STOP_LINE_OFFSET
-};
-
-// lane anchors for spawn location
+// lane anchors (centered lane positions)
 const LANE = {
-  N: {x: CX - ROAD_WIDTH/4, startY: H + 80},
-  S: {x: CX + ROAD_WIDTH/4, startY: -120},
-  E: {y: CY - ROAD_WIDTH/4, startX: -120},
-  W: {y: CY + ROAD_WIDTH/4, startX: W + 80}
+  N: {x: CX - ROAD_W/4, startY: H + 60},
+  S: {x: CX + ROAD_W/4, startY: -80},
+  E: {y: CY - ROAD_W/4, startX: -80},
+  W: {y: CY + ROAD_W/4, startX: W + 60}
 };
 
-// Car class
-class Car{
+// Car class (rectangular car with small windshield)
+class Car {
   constructor(dir){
     this.dir = dir;
-    this.speed = rand(SPEED_MIN, SPEED_MAX);
-    this.crossed = false; // true when front passes stop line
-    this.w = (dir === 'N' || dir === 'S') ? CAR_W : CAR_H;
-    this.h = (dir === 'N' || dir === 'S') ? CAR_H : CAR_W;
-    if(dir === 'N'){
-      this.x = LANE.N.x - this.w/2;
-      this.y = LANE.N.startY + rand(0,40);
-    } else if(dir === 'S'){
-      this.x = LANE.S.x - this.w/2;
-      this.y = LANE.S.startY - rand(0,40);
-    } else if(dir === 'E'){
-      this.x = LANE.E.startX - rand(0,40);
-      this.y = LANE.E.y - this.h/2;
-    } else { // W
-      this.x = LANE.W.startX + rand(0,40);
-      this.y = LANE.W.y - this.h/2;
-    }
+    this.speed = rand(1.2, 1.9);
+    this.crossed = false; // true once front passes stop line
+    // orient size so car faces movement direction
+    if(dir === 'N' || dir === 'S'){ this.w = CAR_W; this.h = CAR_H; }
+    else { this.w = CAR_H; this.h = CAR_W; }
+
+    // spawn position slightly randomized
+    if(dir === 'N'){ this.x = LANE.N.x - this.w/2; this.y = LANE.N.startY + rand(0,40); }
+    if(dir === 'S'){ this.x = LANE.S.x - this.w/2; this.y = LANE.S.startY - rand(0,40); }
+    if(dir === 'E'){ this.x = LANE.E.startX - rand(0,40); this.y = LANE.E.y - this.h/2; }
+    if(dir === 'W'){ this.x = LANE.W.startX + rand(0,40); this.y = LANE.W.y - this.h/2; }
   }
 
-  frontPos(){
-    if(this.dir === 'N') return this.y;                 // top edge (smaller Y)
-    if(this.dir === 'S') return this.y + this.h;       // bottom edge (larger Y)
-    if(this.dir === 'E') return this.x + this.w;       // right edge
-    return this.x;                                      // left edge
+  front(){
+    // front edge depending on movement direction
+    if(this.dir === 'N') return this.y;            // top edge
+    if(this.dir === 'S') return this.y + this.h;  // bottom edge
+    if(this.dir === 'E') return this.x + this.w;  // right edge
+    return this.x;                                 // left edge (W)
   }
 
-  gapToCarAhead(){
+  gapToAhead(){
     let minGap = null;
     for(const other of cars){
       if(other === this || other.dir !== this.dir) continue;
@@ -107,48 +96,45 @@ class Car{
     return minGap;
   }
 
-  isAtStopZone(){
-    const front = this.frontPos();
-    if(this.dir === 'N') return front <= STOP.N + 6;
-    if(this.dir === 'S') return front >= STOP.S - 6;
-    if(this.dir === 'E') return front >= STOP.E - 6;
-    if(this.dir === 'W') return front <= STOP.W + 6;
+  atStopZone(){
+    const f = this.front();
+    if(this.dir === 'N') return f <= STOP_N + 6;
+    if(this.dir === 'S') return f >= STOP_S - 6;
+    if(this.dir === 'E') return f >= STOP_E - 6;
+    if(this.dir === 'W') return f <= STOP_W + 6;
     return false;
   }
 
   move(){
-    // lane alignment
+    // keep lane alignment
     if(this.dir === 'N' || this.dir === 'S'){
       this.x = (this.dir === 'N' ? LANE.N.x : LANE.S.x) - this.w/2;
     } else {
       this.y = (this.dir === 'E' ? LANE.E.y : LANE.W.y) - this.h/2;
     }
 
-    const gap = this.gapToCarAhead();
+    const gap = this.gapToAhead();
     const tooClose = (gap !== null && gap < SAFE_GAP);
 
-    // check crossing stop line
-    const front = this.frontPos();
+    // check crossing
+    const f = this.front();
     if(!this.crossed){
-      if(this.dir === 'N' && front < STOP.N) this.crossed = true;
-      if(this.dir === 'S' && front > STOP.S) this.crossed = true;
-      if(this.dir === 'E' && front > STOP.E) this.crossed = true;
-      if(this.dir === 'W' && front < STOP.W) this.crossed = true;
+      if(this.dir === 'N' && f < STOP_N) this.crossed = true;
+      if(this.dir === 'S' && f > STOP_S) this.crossed = true;
+      if(this.dir === 'E' && f > STOP_E) this.crossed = true;
+      if(this.dir === 'W' && f < STOP_W) this.crossed = true;
     }
 
-    const greenDir = DIRS[currentIndex];
+    const green = DIRS[currentIndex];
 
-    // determine should_stop: car not crossed & light != green & at/near stop zone
-    let should_stop = false;
-    if(!this.crossed && greenDir !== this.dir && this.isAtStopZone()){
-      should_stop = true;
-    }
+    // if not crossed and not green and at stop -> must stop
+    const shouldStop = (!this.crossed && green !== this.dir && this.atStopZone());
 
     let willMove = false;
     if(this.crossed){
-      willMove = !tooClose; // crossed cars move if not colliding
+      willMove = !tooClose;
     } else {
-      if(greenDir === this.dir && !tooClose && !should_stop) willMove = true;
+      if(green === this.dir && !tooClose && !shouldStop) willMove = true;
     }
 
     if(willMove){
@@ -159,20 +145,21 @@ class Car{
     }
   }
 
-  isOffscreen(){
+  offscreen(){
     return (this.x < -300 || this.x > W + 300 || this.y < -300 || this.y > H + 300);
   }
 
   draw(){
+    // body
     ctx.save();
-    ctx.fillStyle = "#d9534f";
+    ctx.fillStyle = "#c95752"; // red car like screenshot
     ctx.strokeStyle = "#0008";
     ctx.lineWidth = 1;
     roundRect(ctx, this.x, this.y, this.w, this.h, 4);
     ctx.fill(); ctx.stroke();
 
     // windshield
-    ctx.fillStyle = "#9fd8ff";
+    ctx.fillStyle = "#aad8ff";
     if(this.dir === 'N' || this.dir === 'S'){
       ctx.fillRect(this.x + 4, this.y + 3, this.w - 8, Math.max(2, this.h * 0.45));
     } else {
@@ -182,172 +169,169 @@ class Car{
   }
 }
 
-function roundRect(ctx, x, y, w, h, r){
-  ctx.beginPath();
-  ctx.moveTo(x + r, y);
-  ctx.arcTo(x + w, y, x + w, y + h, r);
-  ctx.arcTo(x + w, y + h, x, y + h, r);
-  ctx.arcTo(x, y + h, x, y, r);
-  ctx.arcTo(x, y, x + w, y, r);
-  ctx.closePath();
+function roundRect(c,x,y,w,h,r){
+  c.beginPath();
+  c.moveTo(x + r, y);
+  c.arcTo(x + w, y, x + w, y + h, r);
+  c.arcTo(x + w, y + h, x, y + h, r);
+  c.arcTo(x, y + h, x, y, r);
+  c.arcTo(x, y, x + w, y, r);
+  c.closePath();
 }
 
-// drawing scene
+// SCENE DRAWING (roads, white box, stop lines, signals)
 function drawScene(){
   ctx.clearRect(0,0,W,H);
-  ctx.fillStyle = "#222";
-  ctx.fillRect(30,30,W-60,H-60);
+  // dark outer panel
+  ctx.fillStyle = "#2b2b2b";
+  ctx.fillRect(0,0,W,H);
 
   // horizontal road
-  ctx.fillStyle = "#2f2f2f";
-  ctx.fillRect(30, CY - ROAD_WIDTH/2, W-60, ROAD_WIDTH);
+  ctx.fillStyle = "#252525";
+  ctx.fillRect(0, CY - ROAD_W/2, W, ROAD_W);
 
   // vertical road
-  ctx.fillRect(CX - ROAD_WIDTH/2, 30, ROAD_WIDTH, H-60);
+  ctx.fillRect(CX - ROAD_W/2, 0, ROAD_W, H);
 
-  // junction box
-  ctx.strokeStyle = "#ffffff";
-  ctx.lineWidth = 2;
-  ctx.strokeRect(CX - 80, CY - 80, 160, 160);
-
-  // stop lines
+  // central white square (junction box)
   ctx.strokeStyle = "#ffffff";
   ctx.lineWidth = 3;
-  ctx.beginPath(); ctx.moveTo(CX - ROAD_WIDTH/2, STOP.N); ctx.lineTo(CX + ROAD_WIDTH/2, STOP.N); ctx.stroke();
-  ctx.beginPath(); ctx.moveTo(CX - ROAD_WIDTH/2, STOP.S); ctx.lineTo(CX + ROAD_WIDTH/2, STOP.S); ctx.stroke();
-  ctx.beginPath(); ctx.moveTo(STOP.E, CY - ROAD_WIDTH/2); ctx.lineTo(STOP.E, CY + ROAD_WIDTH/2); ctx.stroke();
-  ctx.beginPath(); ctx.moveTo(STOP.W, CY - ROAD_WIDTH/2); ctx.lineTo(STOP.W, CY + ROAD_WIDTH/2); ctx.stroke();
+  ctx.strokeRect(CX - 80, CY - 80, 160, 160);
 
-  // dashed center lines
-  ctx.strokeStyle = "#3b3b3b"; ctx.lineWidth = 2;
-  for(let x=40; x < W-40; x+=30){ ctx.beginPath(); ctx.moveTo(x, CY); ctx.lineTo(x+12, CY); ctx.stroke(); }
-  for(let y=40; y < H-40; y+=30){ ctx.beginPath(); ctx.moveTo(CX, y); ctx.lineTo(CX, y+12); ctx.stroke(); }
+  // stop lines (thin white)
+  ctx.strokeStyle = "#ffffff";
+  ctx.lineWidth = 3;
+  // north stop
+  ctx.beginPath(); ctx.moveTo(CX - ROAD_W/2, STOP_N); ctx.lineTo(CX + ROAD_W/2, STOP_N); ctx.stroke();
+  // south
+  ctx.beginPath(); ctx.moveTo(CX - ROAD_W/2, STOP_S); ctx.lineTo(CX + ROAD_W/2, STOP_S); ctx.stroke();
+  // east
+  ctx.beginPath(); ctx.moveTo(STOP_E, CY - ROAD_W/2); ctx.lineTo(STOP_E, CY + ROAD_W/2); ctx.stroke();
+  // west
+  ctx.beginPath(); ctx.moveTo(STOP_W, CY - ROAD_W/2); ctx.lineTo(STOP_W, CY + ROAD_W/2); ctx.stroke();
+
+  // small dashed center lines to match screenshot
+  ctx.strokeStyle = "#2f2f2f";
+  ctx.lineWidth = 2;
+  for(let x = 20; x < W-20; x += 28){ ctx.beginPath(); ctx.moveTo(x, CY); ctx.lineTo(x+12, CY); ctx.stroke(); }
+  for(let y = 20; y < H-20; y += 28){ ctx.beginPath(); ctx.moveTo(CX, y); ctx.lineTo(CX, y+12); ctx.stroke(); }
 }
 
-// draw traffic lights
+// draw traffic lights as rectangular boxes with circular light
 function drawSignals(){
-  const currentGreen = DIRS[currentIndex];
-  const pos = {
-    N: [CX - ROAD_WIDTH/2 + 18, STOP.N - 24],
-    S: [CX + ROAD_WIDTH/2 - 18, STOP.S + 8],
-    E: [STOP.E + 8, CY - ROAD_WIDTH/2 + 18],
-    W: [STOP.W - 24, CY + ROAD_WIDTH/2 - 18]
+  const green = DIRS[currentIndex];
+  const positions = {
+    N: [CX - 12, STOP_N - 36],
+    S: [CX + 12, STOP_S + 12],
+    E: [STOP_E + 12, CY - 12],
+    W: [STOP_W - 36, CY + 12]
   };
-  ctx.save();
   for(const d of DIRS){
-    const [x,y] = pos[d];
-    ctx.beginPath();
-    ctx.fillStyle = (d === currentGreen) ? "#36c72a" : "#b93e3e";
-    ctx.arc(x, y, 8, 0, Math.PI*2);
-    ctx.fill();
-    ctx.strokeStyle = "#0008"; ctx.stroke();
+    const [x,y] = positions[d];
+    // box
+    ctx.fillStyle = "#222";
+    ctx.fillRect(x-8, y-8, 24, 44);
+    // three circles (only show green/red for simplified look)
+    const isGreen = (d === green);
+    // top/dummy circles: draw as grey, show green for current
+    ctx.fillStyle = isGreen ? "#36c72a" : "#b93e3e";
+    // small circle near center to mimic screenshot
+    ctx.beginPath(); ctx.arc(x+4, y+12, 8, 0, Math.PI*2); ctx.fill();
   }
-  ctx.restore();
 }
 
-// spawning
+// spawn control (keep cars on all sides)
 function canSpawn(dir){
-  for(const c of cars){
-    if(c.dir !== dir) continue;
-    if(dir === 'N'){
-      if(c.y < LANE.N.startY + SPAWN_GAP) return false;
-    }
-    if(dir === 'S'){
-      if(c.y > LANE.S.startY - SPAWN_GAP) return false;
-    }
-    if(dir === 'E'){
-      if(c.x > LANE.E.startX - SPAWN_GAP) return false;
-    }
-    if(dir === 'W'){
-      if(c.x < LANE.W.startX + SPAWN_GAP) return false;
-    }
+  for(const c of cars) if(c.dir === dir){
+    if(dir === 'N'){ if(c.y < LANE.N.startY + 120) return false; }
+    if(dir === 'S'){ if(c.y > LANE.S.startY - 120) return false; }
+    if(dir === 'E'){ if(c.x > LANE.E.startX - 120) return false; }
+    if(dir === 'W'){ if(c.x < LANE.W.startX + 120) return false; }
   }
   return true;
 }
 
-function spawnIfNeeded(){
+function spawn(){
   spawnCounter++;
-  if(spawnCounter < SPAWN_INTERVAL) return;
+  if(spawnCounter < SPAWN_INTERVAL_FRAMES) return;
   spawnCounter = 0;
-  // spawn in a random direction that has space
+  // attempt spawn in each direction in random order until success
   const order = DIRS.slice();
   for(let i=0;i<4;i++){
     const idx = Math.floor(Math.random()*order.length);
-    const d = order.splice(idx,1)[0];
-    if(cars.length > 160) return; // safety cap
-    if(canSpawn(d)){
-      cars.push(new Car(d));
-      return;
-    }
+    const dir = order.splice(idx,1)[0];
+    if(cars.length > MAX_CARS) return;
+    if(canSpawn(dir)) { cars.push(new Car(dir)); return; }
   }
 }
 
-// cleanup
-function cleanupCars(){
-  for(let i = cars.length -1; i >= 0; i--){
-    if(cars[i].isOffscreen()) cars.splice(i,1);
+// cleanup cars off-screen
+function cleanup(){
+  for(let i = cars.length-1; i>=0; i--){
+    if(cars[i].offscreen()) cars.splice(i,1);
   }
 }
 
-// counts update
-function updateCountsDisplay(){
-  const n = cars.filter(c=>c.dir==='N').length;
-  const e = cars.filter(c=>c.dir==='E').length;
-  const s = cars.filter(c=>c.dir==='S').length;
-  const w = cars.filter(c=>c.dir==='W').length;
-  document.getElementById('countN').textContent = n;
-  document.getElementById('countE').textContent = e;
-  document.getElementById('countS').textContent = s;
-  document.getElementById('countW').textContent = w;
-  document.getElementById('greenDir').textContent = DIRS[currentIndex];
-  document.getElementById('timeLeft').textContent = Math.max(0, Math.ceil(timerFrames / FPS));
+// status update
+function updateStatus(){
+  const total = cars.length;
+  const green = DIRS[currentIndex];
+  const secLeft = Math.max(0, Math.ceil(timerFrames / FPS));
+  document.getElementById('statusText').textContent = `Current Green: ${green} | Time Left: ${secLeft}s | Cars: ${total}`;
 }
 
 // adaptive green time (simple)
-function getAdaptiveGreen(){
-  const currentCount = cars.filter(c=>c.dir===DIRS[currentIndex]).length;
-  return Math.min(25, 8 + currentCount * 2); // base 8s + 2s per car (cap)
+function adaptiveTime(){
+  const current = cars.filter(c=>c.dir === DIRS[currentIndex]).length;
+  return Math.min(25, 8 + current * 2); // 8s base + 2s per queued car
 }
 
-// main update loop
-let frameCount = 0;
-function step(){
-  frameCount++;
-  // update signals timer once per frame
+// main loop
+function tick(){
+  // timer
   timerFrames--;
   if(timerFrames <= 0){
-    // switch
     currentIndex = (currentIndex + 1) % DIRS.length;
-    const newSeconds = getAdaptiveGreen();
-    timerFrames = Math.round(newSeconds * FPS);
+    timerFrames = Math.round(adaptiveTime() * FPS);
   }
 
-  // spawn & update cars
-  spawnIfNeeded();
+  spawn();
 
-  for(const c of cars){
-    c.move();
-  }
-  cleanupCars();
+  for(const c of cars) c.move();
+  cleanup();
 
-  // drawing
+  // draw
   drawScene();
   drawSignals();
+  // draw cars - ensure cars behind stop line are visible
+  // draw in order so front-most cars render last (simple approach)
+  cars.sort((a,b)=>{
+    // simple painter order by distance to center for nicer overlap: farther first
+    const da = distanceToCenter(a), db = distanceToCenter(b);
+    return da - db;
+  });
   for(const c of cars) c.draw();
 
-  updateCountsDisplay();
-
-  requestAnimationFrame(step);
+  updateStatus();
+  requestAnimationFrame(tick);
 }
 
-// initialize a few cars so scene isn't empty
-for(let i=0;i<4;i++){
-  cars.push(new Car(DIRS[i]));
-  cars.push(new Car(DIRS[i]));
+function distanceToCenter(car){
+  const cx = car.x + car.w/2;
+  const cy = car.y + car.h/2;
+  const dx = cx - CX, dy = cy - CY;
+  return Math.sqrt(dx*dx + dy*dy);
 }
 
-// start with adaptive timer based on initial counts
-timerFrames = Math.round(getAdaptiveGreen() * FPS);
+// initial population: put some cars on each direction so red sides show waiting cars
+for(let i=0;i<6;i++){
+  cars.push(new Car('N'));
+  cars.push(new Car('E'));
+  cars.push(new Car('S'));
+  cars.push(new Car('W'));
+}
+// reduce count slightly so it looks like screenshot
+cars = cars.slice(0, 18);
 
-// start loop
-requestAnimationFrame(step);
+timerFrames = Math.round(baseGreenSeconds * FPS);
+requestAnimationFrame(tick);
